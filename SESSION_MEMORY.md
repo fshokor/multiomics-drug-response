@@ -5,49 +5,52 @@
 
 ## Current State
 
-**Phase:** Week 1 — Environment + Data Download  
-**Status:** Repo scaffolded. Data download scripts written. Data NOT yet downloaded (requires local machine).
+**Phase:** Week 1 complete — data downloaded and verified
+**Status:** All data ready. Three-way overlap confirmed. Ready for processing and baselines.
 
 ---
 
-## What Exists
+## Data Layout
 
-### Repo structure
-- Full folder structure created at `multiomics-drug-response/`
-- `.gitignore` in place (ignores data/raw, data/processed, checkpoints, csv, npy, parquet)
-- `environment.yml` created for conda setup
-- `requirements.txt` stub in place
+```
+data/
+├── GDSC2/
+│   ├── GDSC2.csv                  ← drug response (cell_line_name × pubchem_id)
+│   ├── gene_expression.csv        ← RNA-seq, cellosaurus_id index
+│   ├── proteomics.csv             ← ProCan converted, cellosaurus_id index
+│   ├── cell_line_names.csv        ← cellosaurus_id ↔ cell_line_name ↔ tissue
+│   ├── drug_smiles.csv
+│   ├── drug_fingerprints/
+│   └── drug_graphs/
+└── meta/
+    ├── tissue_mapping.csv
+    └── gene_lists/
+```
 
-### Code written
-- `src/data/download.py` — standalone script to download all 4 raw data files + verify + ChEMBL API test
-- `notebooks/01_data_download.ipynb` — verification notebook to run after download
+## Key Numbers
 
-### Data status
-- **NOT DOWNLOADED** — all download scripts written but require local machine execution
-- External domains (cog.sanger.ac.uk, depmap.org, figshare.com, ebi.ac.uk) not reachable from Claude sandbox
+| Dataset | Value |
+|---|---|
+| GDSC2 cell lines | 969 |
+| Gene expression cell lines | 1,010 |
+| Proteomics cell lines | 860 |
+| **Three-way overlap** | **836** |
+| GDSC2 drugs | 287 |
+| Drug-cell line pairs in overlap | 204,931 |
+| Genes | 17,738 |
+| Proteins | 8,498 |
 
-### Packages installed (in Claude sandbox only)
-- pandas 2.3.3, numpy 2.4.4, scipy 1.17.1, sklearn 1.8.0, rdkit, requests
-- drevalpy and torch NOT installed (disk space constraint in sandbox; install locally)
+## Universal Key
+- `cellosaurus_id` (e.g. `CVCL_0001`) — used by gene_expression.csv and proteomics.csv
+- GDSC2.csv uses `cell_line_name` → map via `cell_line_names.csv`
 
----
+## Key Decisions
+- drevalpy Zenodo bundle used for GDSC2 + gene expression + drug features
+- ProCan downloaded manually from figshare (90 MB .txt, tab-separated)
+- ProCan index format: `SIDM00018;K052` → extract name after `;` → normalize → map to cellosaurus_id
+- 862 ProCan cell lines mapped (87 unmatched, acceptable)
+- drevalpy version 1.5.1, Python 3.11
 
-## Key Numbers (to fill in after local download)
-- Cell Model Passports: ??? rows
-- GDSC2: ??? cell lines × ??? drugs
-- CCLE RNA-seq: ??? cell lines × ??? genes
-- ProCan: ??? cell lines × ??? proteins
-- Three-way overlap: ??? cell lines (expected 811–911)
-
----
-
-## Decisions Made This Session
-- Universal cell line ID: DepMap ID (already in PLAN.md, confirmed)
-- Download order: Cell Model Passports first, always
-
----
-
-## Blockers / Notes
-- CCLE RNA-seq requires manual download from depmap.org portal (no direct API URL)
-- ChEMBL API not testable in sandbox (ebi.ac.uk blocked) — test locally
-- drevalpy requires torch; full install on local machine or Colab only
+## Scripts
+- `src/data/download.py` — full pipeline: drevalpy download + ProCan conversion + verification
+- `notebooks/01_data_download.ipynb` — verification notebook, all cells passing

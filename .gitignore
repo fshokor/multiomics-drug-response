@@ -1,4 +1,5 @@
 # Data (large files, never commit)
+data/
 data/raw/
 data/processed/
 results/checkpoints/
@@ -11,6 +12,7 @@ results/checkpoints/
 *.pkl
 *.pt
 *.csv
+*.tsv
 *.parquet
 *.npy
 *.gz

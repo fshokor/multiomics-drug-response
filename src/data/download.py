@@ -1,158 +1,196 @@
 """
-Data download script — run this locally (not in Claude sandbox).
-Downloads all raw data files for the multiomics drug response project.
+Data preparation script — downloads and prepares all datasets.
 
 Usage:
     python src/data/download.py
 
-All files saved to data/raw/. Requires ~700 MB free disk space.
+What this does:
+    1. Downloads GDSC2 (drug response + gene expression + drug features) via drevalpy
+    2. Expects ProCan proteomics to be manually downloaded (figshare blocks automation)
+    3. Converts ProCan to drevalpy format using cellosaurus_id as universal key
+    4. Verifies three-way overlap
+
+Manual step required before running:
+    Download: ProCan-DepMapSanger_protein_matrix_8498_averaged.txt (90 MB)
+    From:     https://figshare.com/articles/dataset/Pan-cancer_proteomic_map_of_949_human_cell_lines/19345397
+    Save to:  data/raw/procan/ProCan-DepMapSanger_protein_matrix_8498_averaged.txt
+
+Final data layout:
+    data/
+    ├── GDSC2/
+    │   ├── GDSC2.csv                ← drug response (pubchem_id × cellosaurus_id)
+    │   ├── gene_expression.csv      ← RNA-seq (cellosaurus_id index)
+    │   ├── proteomics.csv           ← ProCan converted (cellosaurus_id index)
+    │   ├── cell_line_names.csv      ← cellosaurus_id ↔ cell_line_name ↔ tissue
+    │   ├── drug_smiles.csv          ← SMILES strings
+    │   ├── drug_fingerprints/       ← Morgan fingerprints
+    │   └── drug_graphs/             ← PyG molecular graphs
+    └── meta/
+        ├── tissue_mapping.csv
+        └── gene_lists/
 """
 
-import os
-import urllib.request
+import pandas as pd
 import requests
 from pathlib import Path
 
-# ── Paths ────────────────────────────────────────────────────────────────────
-ROOT = Path(__file__).resolve().parents[2]
-RAW  = ROOT / "data" / "raw"
+ROOT      = Path(__file__).resolve().parents[2]
+DATA_PATH = str(ROOT / "data")
+
+PROCAN_RAW  = ROOT / "data" / "raw" / "procan" / "ProCan-DepMapSanger_protein_matrix_8498_averaged.txt"
+PROCAN_DEST = ROOT / "data" / "GDSC2" / "proteomics.csv"
+CL_NAMES    = ROOT / "data" / "GDSC2" / "cell_line_names.csv"
 
 
-def download_file(url: str, dest: Path, label: str) -> None:
-    """Download a file with progress reporting."""
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists():
-        print(f"  [SKIP] {label} already exists at {dest}")
+# ── Step 1: Download GDSC2 bundle via drevalpy ────────────────────────────────
+
+def download_drevalpy_data() -> None:
+    """
+    Download GDSC2 + meta via drevalpy from Zenodo.
+
+    This gives us:
+      - GDSC2.csv              (drug response, cellosaurus_id keyed)
+      - gene_expression.csv    (CCLE RNA-seq, cellosaurus_id index)
+      - cell_line_names.csv    (cellosaurus_id ↔ cell_line_name ↔ tissue)
+      - drug_smiles.csv        (SMILES for all drugs)
+      - drug_fingerprints/     (Morgan fingerprints)
+      - drug_graphs/           (PyG molecular graphs)
+      - methylation.csv, mutations.csv, copy_number_variation_gistic.csv
+    """
+    print("[1/3] Downloading GDSC2 bundle via drevalpy...")
+    from drevalpy.datasets.loader import download_dataset
+    download_dataset("GDSC2", data_path=DATA_PATH)
+    download_dataset("meta",  data_path=DATA_PATH)
+    print("      Done.\n")
+
+
+# ── Step 2: Convert ProCan to drevalpy format ─────────────────────────────────
+
+def convert_procan() -> None:
+    """
+    Convert ProCan proteomics matrix to drevalpy format.
+
+    ProCan index format:  'SIDM00018;K052'  (Sanger ID ; cell line name)
+    drevalpy index format: cellosaurus_id   (e.g. 'CVCL_1234')
+
+    Mapping: extract cell line name from ProCan index → normalize →
+             look up in cell_line_names.csv → get cellosaurus_id
+    """
+    print("[2/3] Converting ProCan proteomics to drevalpy format...")
+
+    # Check ProCan file exists
+    if not PROCAN_RAW.exists():
+        print(f"""
+      [ERROR] ProCan file not found at:
+              {PROCAN_RAW}
+
+      Please download it manually:
+        1. Go to: https://figshare.com/articles/dataset/Pan-cancer_proteomic_map_of_949_human_cell_lines/19345397
+        2. Download: ProCan-DepMapSanger_protein_matrix_8498_averaged.txt (90 MB)
+        3. Save to:  data/raw/procan/
+        4. Re-run this script
+        """)
         return
-    print(f"  Downloading {label}...")
-    urllib.request.urlretrieve(url, dest)
-    size_mb = dest.stat().st_size / 1e6
-    print(f"  [OK] {label} → {dest} ({size_mb:.1f} MB)")
+
+    # Check drevalpy data exists
+    if not CL_NAMES.exists():
+        print("      [ERROR] cell_line_names.csv not found. Run download_drevalpy_data() first.")
+        return
+
+    # Load ProCan
+    procan = pd.read_csv(PROCAN_RAW, sep="\t", index_col=0)
+    print(f"      ProCan raw shape: {procan.shape}")  # expect (949, 8498)
+
+    # Load drevalpy cell line name → cellosaurus_id mapping
+    cl_names = pd.read_csv(CL_NAMES)  # cols: cellosaurus_id, cell_line_name, tissue
+    print(f"      Cell line names loaded: {len(cl_names)} entries")
+
+    # Normalize function: remove dashes, spaces, underscores, uppercase
+    def normalize(s: str) -> str:
+        return str(s).upper().replace("-", "").replace(" ", "").replace("_", "")
+
+    # Build normalized name → cellosaurus_id lookup
+    cl_names["name_norm"] = cl_names["cell_line_name"].map(normalize)
+    name_to_cvcl = dict(zip(cl_names["name_norm"], cl_names["cellosaurus_id"]))
+
+    # Extract cell line name from ProCan index (format: 'SIDM00018;K052')
+    procan_names      = pd.Series(procan.index.str.split(";").str[1])
+    procan_names_norm = procan_names.map(normalize)
+
+    # Map to cellosaurus_id
+    procan.index      = procan_names_norm.map(name_to_cvcl).values
+    procan            = procan[pd.notna(procan.index)]
+    procan.index.name = "cellosaurus_id"
+
+    print(f"      Mapped to cellosaurus_id: {procan.shape[0]} cell lines matched")
+    print(f"      Unmatched (dropped):      {949 - procan.shape[0]}")
+
+    # Save
+    PROCAN_DEST.parent.mkdir(parents=True, exist_ok=True)
+    procan.to_csv(PROCAN_DEST)
+    print(f"      Saved to {PROCAN_DEST}\n")
 
 
-def download_cell_model_passports() -> None:
-    """Cell line ID mapping: Sanger ↔ CCLE ↔ DepMap IDs."""
-    print("\n[1/4] Cell Model Passports mapping")
-    download_file(
-        url="https://cog.sanger.ac.uk/cmp/download/model_list_latest.csv.gz",
-        dest=RAW / "mapping" / "model_list_latest.csv.gz",
-        label="Cell Model Passports"
-    )
+# ── Step 3: Verify ────────────────────────────────────────────────────────────
 
+def verify() -> None:
+    """Verify all files exist and report three-way overlap."""
+    print("[3/3] Verification")
 
-def download_gdsc2() -> None:
-    """GDSC2 fitted dose response parameters."""
-    print("\n[2/4] GDSC2 drug response")
-    # Check cancerrxgene.org/downloads/bulk_download if this URL changes
-    download_file(
-        url="https://cog.sanger.ac.uk/cancerrxgene/GDSC_bulk_data_csv_v8.5/GDSC2_fitted_dose_response_27Oct23.csv",
-        dest=RAW / "gdsc2" / "GDSC2_fitted_dose_response.csv",
-        label="GDSC2 dose response"
-    )
+    checks = {
+        "GDSC2 response":    ROOT / "data" / "GDSC2" / "GDSC2.csv",
+        "Gene expression":   ROOT / "data" / "GDSC2" / "gene_expression.csv",
+        "Proteomics":        ROOT / "data" / "GDSC2" / "proteomics.csv",
+        "Cell line names":   ROOT / "data" / "GDSC2" / "cell_line_names.csv",
+        "Drug SMILES":       ROOT / "data" / "GDSC2" / "drug_smiles.csv",
+        "Tissue mapping":    ROOT / "data" / "meta"  / "tissue_mapping.csv",
+    }
 
+    all_ok = True
+    for label, path in checks.items():
+        if path.exists():
+            size = path.stat().st_size / 1e6
+            print(f"      [OK]      {label}: {size:.0f} MB")
+        else:
+            print(f"      [MISSING] {label}: {path}")
+            all_ok = False
 
-def download_procan() -> None:
-    """ProCan-DepMapSanger proteomics matrix (~495 MB)."""
-    print("\n[3/4] ProCan proteomics")
-    download_file(
-        url="https://figshare.com/ndownloader/files/35468115",
-        dest=RAW / "procan" / "procan_protein_matrix.csv",
-        label="ProCan protein matrix"
-    )
+    # Three-way overlap using cellosaurus_id as universal key
+    gdsc2_path = ROOT / "data" / "GDSC2" / "GDSC2.csv"
+    ge_path    = ROOT / "data" / "GDSC2" / "gene_expression.csv"
+    prot_path  = ROOT / "data" / "GDSC2" / "proteomics.csv"
+    cl_path    = ROOT / "data" / "GDSC2" / "cell_line_names.csv"
 
+    if all(p.exists() for p in [gdsc2_path, ge_path, prot_path, cl_path]):
+        gdsc2    = pd.read_csv(gdsc2_path, dtype={"pubchem_id": str}, low_memory=False)
+        ge       = pd.read_csv(ge_path,   index_col=0)
+        prot     = pd.read_csv(prot_path, index_col=0)
+        cl_names = pd.read_csv(cl_path)
 
-def download_ccle_instructions() -> None:
-    """CCLE RNA-seq must be downloaded manually from DepMap portal."""
-    print("\n[4/4] CCLE RNA-seq (manual download required)")
-    print("  1. Go to: https://depmap.org/portal/data_page/?tab=allData")
-    print("  2. Search for: OmicsExpressionProteinCodingGenesTPMLogp1")
-    print("  3. Download the CSV file")
-    print(f"  4. Save to: {RAW / 'ccle' / 'OmicsExpressionProteinCodingGenesTPMLogp1.csv'}")
-    print("  (~200 MB)")
+        # GDSC2 uses cell_line_name — convert to cellosaurus_id via cl_names
+        name_to_cvcl = dict(zip(cl_names["cell_line_name"], cl_names["cellosaurus_id"]))
+        gdsc2_cvcl   = set(gdsc2["cell_line_name"].map(name_to_cvcl).dropna())
 
+        ge_cls   = set(ge.index.astype(str))
+        prot_cls = set(prot.index.astype(str))
+        overlap  = gdsc2_cvcl & ge_cls & prot_cls
 
-def test_chembl_api() -> None:
-    """Quick sanity check that the ChEMBL API is reachable."""
-    print("\n[ChEMBL API test]")
-    from chembl_webresource_client.new_client import new_client
-    molecule = new_client.molecule
+        print(f"\n      GDSC2 cell lines (via cvcl):    {len(gdsc2_cvcl)}")
+        print(f"      Gene expression cell lines:     {len(ge_cls)}")
+        print(f"      Proteomics cell lines:          {len(prot_cls)}")
+        print(f"      Three-way overlap:              {len(overlap)}  (expected ~800-900)")
+        print(f"\n      GDSC2 unique drugs:             {gdsc2['pubchem_id'].nunique()}")
+        print(f"      Gene expression genes:          {ge.shape[1]}")
+        print(f"      Proteins:                       {prot.shape[1]}")
 
-    test_drugs = ["Erlotinib", "Imatinib", "Gefitinib", "Paclitaxel", "Docetaxel"]
-    results = {}
-    for drug in test_drugs:
-        hits = molecule.filter(pref_name__iexact=drug).only(
-            ['molecule_chembl_id', 'molecule_structures']
-        )
-        for r in hits:
-            if r.get('molecule_structures'):
-                smiles = r['molecule_structures'].get('canonical_smiles')
-                if smiles:
-                    results[drug] = smiles
-                    break
-        if drug not in results:
-            results[drug] = None
-
-    for drug, smiles in results.items():
-        status = "OK" if smiles else "NOT FOUND"
-        print(f"  [{status}] {drug}: {smiles[:40] + '...' if smiles else 'None'}")
-
-
-def verify_downloads() -> None:
-    """Spot-check downloaded files."""
-    import pandas as pd
-
-    print("\n── Verification ────────────────────────────────────────────────")
-
-    # Cell Model Passports
-    mapping_path = RAW / "mapping" / "model_list_latest.csv.gz"
-    if mapping_path.exists():
-        mapping = pd.read_csv(mapping_path)
-        required_cols = ['model_id', 'CCLE_ID', 'depmap_id', 'cell_line_name']
-        missing = [c for c in required_cols if c not in mapping.columns]
-        print(f"  Mapping: {mapping.shape[0]} rows, {mapping.shape[1]} cols")
-        print(f"  Required columns present: {not missing}")
-        if missing:
-            print(f"  MISSING COLUMNS: {missing}")
-            print(f"  Actual columns: {mapping.columns.tolist()[:10]}")
+    if all_ok:
+        print("\n      All files present. Ready for Session 3.")
     else:
-        print("  Mapping: NOT DOWNLOADED")
-
-    # GDSC2
-    gdsc_path = RAW / "gdsc2" / "GDSC2_fitted_dose_response.csv"
-    if gdsc_path.exists():
-        gdsc = pd.read_csv(gdsc_path)
-        print(f"  GDSC2: {gdsc.shape[0]:,} rows × {gdsc.shape[1]} cols")
-        print(f"  Cell lines: {gdsc['CELL_LINE_NAME'].nunique()}")
-        print(f"  Drugs: {gdsc['DRUG_NAME'].nunique()}")
-        print(f"  Columns: {gdsc.columns.tolist()}")
-    else:
-        print("  GDSC2: NOT DOWNLOADED")
-
-    # CCLE RNA
-    ccle_path = RAW / "ccle" / "OmicsExpressionProteinCodingGenesTPMLogp1.csv"
-    if ccle_path.exists():
-        rna = pd.read_csv(ccle_path, index_col=0, nrows=5)
-        print(f"  CCLE RNA: index format sample: {rna.index[:3].tolist()}")
-        print(f"  CCLE RNA: {rna.shape[1]} genes (from first 5 rows)")
-    else:
-        print("  CCLE RNA: NOT DOWNLOADED (manual step required)")
-
-    # ProCan
-    procan_path = RAW / "procan" / "procan_protein_matrix.csv"
-    if procan_path.exists():
-        prot = pd.read_csv(procan_path, index_col=0, nrows=5)
-        print(f"  ProCan: index format sample: {prot.index[:3].tolist()}")
-        print(f"  ProCan: {prot.shape[1]} proteins (from first 5 rows)")
-    else:
-        print("  ProCan: NOT DOWNLOADED")
+        print("\n      Some files missing — check errors above.")
 
 
 if __name__ == "__main__":
-    print("=== Multiomics Drug Response — Data Download ===")
-    download_cell_model_passports()
-    download_gdsc2()
-    download_procan()
-    download_ccle_instructions()
-    test_chembl_api()
-    verify_downloads()
-    print("\nDone. Run notebooks/01_data_download.ipynb for detailed inspection.")
+    print("=== Multiomics Drug Response — Data Preparation ===\n")
+    download_drevalpy_data()
+    convert_procan()
+    verify()
