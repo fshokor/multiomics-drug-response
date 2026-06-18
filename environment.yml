@@ -1,47 +1,42 @@
 name: multiomics
 channels:
-  - pytorch
-  - pyg
   - conda-forge
   - defaults
 dependencies:
-  - python=3.10
+  - python=3.11
   - pip
 
-  # Core data science
-  - pandas
-  - numpy
-  - scipy
-  - scikit-learn
-  - matplotlib
-  - seaborn
-  - plotly
-
-  # Jupyter
+  # Jupyter only — everything else comes via pip below.
+  # Conda must NOT pre-install numpy/pandas/scipy here: doing so installs
+  # an unpinned numpy, and the later `pip install drevalpy` silently
+  # downgrades it, which is what broke the last environment.
   - jupyter
   - ipykernel
   - ipywidgets
 
-  # Utilities
-  - pyyaml
-  - tqdm
-  - requests
-
   - pip:
-    # PyTorch (CPU build — GPU handled separately on Colab)
-    # For local CPU:
-    - torch
-    - torchvision
+    # drevalpy FIRST, unconstrained — let it pull its own compatible
+    # numpy/scikit-learn/torch versions. Everything after this must be
+    # compatible with whatever drevalpy pins; do not pip install numpy
+    # or torch separately before this line.
+    # - drevalpy
 
-    # PyTorch Geometric
+    # PyTorch Geometric — installed after torch is already resolved by drevalpy
+    - torch
     - torch-geometric
 
     # Biology / chemistry
     - rdkit
     - chembl-webresource-client
 
-    # DrEval framework
-    - drevalpy
+    # Core data science (will reuse drevalpy's numpy/pandas/scipy/sklearn
+    # pins instead of overriding them, as long as no version is specified here)
+    - matplotlib
+    - seaborn
+    - plotly
+    - pyyaml
+    - tqdm
+    - requests
 
     # Misc
     - pyarrow        # parquet support
