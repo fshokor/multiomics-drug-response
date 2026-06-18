@@ -1,0 +1,31 @@
+# Data (large files, never commit)
+data/raw/
+data/processed/
+results/checkpoints/
+
+# Keep split indices
+!data/splits/*.json
+
+# File types
+*.h5
+*.pkl
+*.pt
+*.csv
+*.parquet
+*.npy
+*.gz
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store

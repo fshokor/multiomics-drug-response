@@ -1,0 +1,48 @@
+name: multiomics
+channels:
+  - pytorch
+  - pyg
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+
+  # Core data science
+  - pandas
+  - numpy
+  - scipy
+  - scikit-learn
+  - matplotlib
+  - seaborn
+  - plotly
+
+  # Jupyter
+  - jupyter
+  - ipykernel
+  - ipywidgets
+
+  # Utilities
+  - pyyaml
+  - tqdm
+  - requests
+
+  - pip:
+    # PyTorch (CPU build — GPU handled separately on Colab)
+    # For local CPU:
+    - torch
+    - torchvision
+
+    # PyTorch Geometric
+    - torch-geometric
+
+    # Biology / chemistry
+    - rdkit
+    - chembl-webresource-client
+
+    # DrEval framework
+    - drevalpy
+
+    # Misc
+    - pyarrow        # parquet support
+    - openpyxl       # Excel support if needed

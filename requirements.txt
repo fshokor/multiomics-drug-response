@@ -1,0 +1,17 @@
+# Generated after conda environment setup — see environment.yml
+# torch
+# torch-geometric
+# drevalpy
+# rdkit
+# chembl-webresource-client
+# pandas
+# numpy
+# scipy
+# scikit-learn
+# matplotlib
+# seaborn
+# plotly
+# jupyter
+# pyyaml
+# tqdm
+# requests
