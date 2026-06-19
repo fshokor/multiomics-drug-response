@@ -38,6 +38,7 @@ dependencies:
     - pyyaml
     - tqdm
     - requests
+    - umap-learn
 
     # Misc
     - pyarrow        # parquet support

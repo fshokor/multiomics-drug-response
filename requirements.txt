@@ -16,3 +16,4 @@
 # tqdm
 # requests
 # mygene
+# umap-learn
