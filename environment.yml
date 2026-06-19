@@ -28,6 +28,7 @@ dependencies:
     # Biology / chemistry
     - rdkit
     - chembl-webresource-client
+    - mygene
 
     # Core data science (will reuse drevalpy's numpy/pandas/scipy/sklearn
     # pins instead of overriding them, as long as no version is specified here)
