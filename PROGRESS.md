@@ -37,3 +37,31 @@
 - Converted ProCan to drevalpy format: extracted cell line name from SIDM;name index, normalized, mapped to cellosaurus_id via cell_line_names.csv
 - Confirmed three-way overlap: 836 cell lines, 287 drugs, 204,931 pairs
 - Updated download.py and 01_data_download.ipynb to reflect actual data layout
+
+## Session 3 — Statistical Analysis & Similarity/Clustering
+ 
+**Scope:** Expanded beyond the original plan (Tasks 1-2: RNA-protein correlation,
+independent protein signal) to include tissue-confound checks, the blood-vs-solid
+hypothesis test, cell-line/drug similarity clustering, and pair-level heterogeneity
+analysis. Tasks 3-4 (baselines, splits) deferred to Session 4.
+ 
+**Key fixes:**
+- Diagnosed and fixed a protein-to-gene-symbol mapping bug (UniProt mnemonic vs. official
+  symbol) that was silently excluding ~4,800 proteins from every correlation calculation.
+- Switched to ProCan's 6,692-protein multi-peptide-confidence subset, recovering
+  literature-consistent correlation numbers.
+- Fixed duplicate-`cellosaurus_id` row bugs (3 separate occurrences across two notebooks).
+**Key result:** Blood vs. solid RNA-protein correlation difference is statistically
+significant (p = 7.3e-11) in the hypothesized direction — direct support for the
+project's core multimodal hypothesis. This only emerged after the data-quality fixes
+above; the naive pipeline showed no effect.
+ 
+**Deliverables:**
+- `notebooks/02_statistical_analysis.ipynb` (reorganized into labeled subsections)
+- `notebooks/03_similarity_clustering.ipynb`
+- `data/processed/top_independent_proteins.csv` — candidate protein list for the fusion
+  model, cross-validated by two independent statistical methods
+- `results/analysis_summary.md` — full write-up of all findings
+- `SESSION_MEMORY.md`, `NEXT_SESSION.md` updated accordingly
+**Carried forward to Session 4:** drevalpy baselines (local CPU + Colab GPU) and
+generating/saving all four splits (LPO, LCO, LDO, LTO).
