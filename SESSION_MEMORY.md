@@ -172,3 +172,41 @@ this project needs to (no baseline does genuine RNA+protein concatenation/fusion
 - Feature selection must happen before per-pair matrix expansion, always —
   this is the load-bearing fix from this session, easy to accidentally regress
   if functions get refactored again.
+
+## Current state
+ 
+Baselines (naive, RF, single-modality DL) are now running end-to-end on the **new** `splits.json` structure (one shared train + four test sets per fold: LCO, LDO, LTO, LPO). Three new notebooks built this session:
+ 
+### `09_custom_MLP.ipynb` — single-modality DL baselines
+- `NN1Omics`: simple MLP, run independently per arm (RNA, protein, drug fingerprint)
+- `DrugGNN` added (GCNConv, 3 layers, `global_mean_pool`) as a 4th single-modality baseline, using `DrugGraphDataset` + PyG `DataLoader` for graph batching
+- Protein NaN bug found and fixed: `protein.fillna(0)` was missing after the dedupe step in the data-loading cell — root cause of NaN predictions/MSE. Fix applied right after `protein[~protein.index.duplicated(keep="first")]`, before `OMICS` dict is built.
+- `evaluateMT()` extended: added RMSE, Spearman, R², ROC-AUC (binarized at median target, sign-flipped since lower IC50 = more sensitive), and fixed a variable-collision bug where `linregress`'s p-value was silently overwriting `pearsonr`'s p-value.
+- `evaluateMT()` made NaN-safe: detects constant predictions (`variance_pred ≈ 0`), suppresses scipy's `ConstantInputWarning`, and returns explicit `NaN` for Correlation/Spearman/Slope/ROC-AUC instead of crashing or warning.
+- Results (fold 0): Drug-FP (LCO r=0.73) > Drug-GNN (LCO r=0.61) > Protein ≈ RNA (LCO r≈0.21–0.22). Drug-only models (FP and GNN) collapse on LDO (r≈0.11–0.16) — confirms they're mostly memorizing per-drug mean, not learning cell-line-specific response. Full writeup: `single_modality_dl_results.md`.
+### `10_naive_predictors.ipynb` — all 6 drevalpy naive baselines
+- Implemented `NaivePredictor`, `NaiveDrugMeanPredictor`, `NaiveCellLineMeanPredictor`, `NaiveTissueMeanPredictor`, `NaiveTissueDrugMeanPredictor`, `NaiveMeanEffectsPredictor` (the last is drevalpy's own claimed strongest naive baseline: `dataset_mean + cell_line_effect + drug_effect`).
+- **Important distinction:** this notebook's `NaiveTissueDrugMeanPredictor` uses drevalpy's strict single-level fallback (tissue_drug → dataset_mean), NOT the project's earlier 3-level chained fallback (tissue_drug → drug → tissue → dataset_mean) from notebook 07's original implementation under the old split structure. The strict version produces `NaN` correlation on LDO/LTO (predictions collapse to a literal constant once the drug or tissue axis is fully unseen) — this is correct/expected behavior, not a bug, and is informative (R² goes negative, confirming zero generalization on that axis). The old notebook 07 numbers (r=0.83–0.87 on LCO/LPO/LTO) are **not comparable** — different split structure entirely, kept for historical reference only.
+- Decision pending: whether to also add the chained-fallback variant under the new splits for a stronger naive comparison point (not yet implemented).
+### `11_random_forest.ipynb` — RF ablation grid
+- Arms: RNA-only, Protein-only, RNA+Drug-FP, Protein+Drug-FP, Drug-FP-only (5 arms total after this session's addition)
+- Fixed hyperparameters: `n_estimators=500, max_features='sqrt'` (per `PLAN.md`)
+- One RF fit per (fold, arm), evaluated across all 4 test splits from that fold — 5 folds × 5 arms = 25 fits total
+- Top-1000-variance feature selection computed from **train-fold cell lines only** (leakage-safe)
+- Summary aggregation now reports `mean ± std` across the 5 folds, not mean alone
+## Key finding this session (important — affects fusion design)
+ 
+**RNA-only and protein-only RF predictions are nearly identical** (Pearson r = 0.996 between the two arms' predictions on the same test fold), despite using completely different feature spaces (17,738 genes vs 8,498 proteins) and independently-fit models. Root cause: **top-variance feature selection has no relationship to drug response or RNA-protein divergence — it selects whatever varies most across cell lines, which for both omics layers is dominated by tissue-of-origin.** Both arms are therefore converging on a tissue-identity proxy rather than capturing modality-specific signal.
+ 
+**Implication:** this is not a code bug, but it does mean the current protein-only RF (and likely protein-only DL) results aren't testing genuine RNA vs protein biology — they're testing the same coarse signal twice. This must be fixed before the fusion model, since the whole project hypothesis depends on RNA and protein carrying partially independent information that a cross-attention model can exploit. If selection collapses both arms to the same axis pre-model, no fusion architecture can recover complementarity that was never given to it.
+ 
+This validates (rather than contradicts) the project's already-documented design principle (README/PLAN.md): protein features should be selected by **independent predictive contribution beyond RNA** (e.g. partial correlation controlling for the gene's own RNA expression, or residual variance after regressing protein on RNA) — not raw variance. RNA can keep top-variance selection since it has no complementarity requirement.
+ 
+## Outstanding issues
+ 
+- **Protein feature selection method needs to change** from top-variance to an RNA-divergence-aware method (partial correlation or residual variance) before any further protein-involving baselines or the fusion model are built. RNA selection stays as top-variance.
+- `NaiveTissueDrugMeanPredictor` chained-fallback variant not yet re-implemented under new splits (optional, for a stronger naive comparison point).
+- RNA+Drug / Protein+Drug RF arms were run but not yet re-validated against the corrected protein selection — current Protein+Drug numbers may also be tissue-confounded and should be treated as provisional.
+## Files produced this session
+- `single_modality_dl_results.md` — DL single-modality results table + conclusions
+- `09_custom_MLP.ipynb`, `10_naive_predictors.ipynb`, `11_random_forest.ipynb`

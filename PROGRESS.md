@@ -198,3 +198,11 @@ notebook 08, run it end-to-end on real data, then build the Task 4
 consolidation notebook once both 07 and 08 have real `summary.csv` files.
 DIPK and the orphaned drevalpy-harness notebooks (05/06) remain open,
 non-blocking decisions.
+
+## Session — Baselines under new split structure (naive, RF, single-modality DL)
+ 
+- Built `09_custom_MLP.ipynb`: single-modality DL baselines (RNA, protein, drug fingerprint via `NN1Omics`; drug graph via new `DrugGNN`/GCNConv). Fixed a protein NaN propagation bug (`fillna(0)` was missing post-dedupe). Extended `evaluateMT()` with RMSE, Spearman, R², ROC-AUC, and a NaN-safe constant-prediction guard.
+- Built `10_naive_predictors.ipynb`: all 6 drevalpy naive baselines (`NaivePredictor`, `NaiveDrugMeanPredictor`, `NaiveCellLineMeanPredictor`, `NaiveTissueMeanPredictor`, `NaiveTissueDrugMeanPredictor`, `NaiveMeanEffectsPredictor`) under the new shared-train/four-test-set fold structure. Confirmed `NaiveMeanEffectsPredictor` is the real bar to beat per drevalpy. Noted the strict single-fallback `NaiveTissueDrugMeanPredictor` is not comparable to the project's earlier 3-level chained-fallback version from notebook 07/old splits.
+- Built `11_random_forest.ipynb`: RF ablation across RNA, Protein, RNA+Drug, Protein+Drug, Drug-only arms, fixed hyperparameters, leakage-safe top-variance feature selection (train-fold cell lines only), mean ± std summary across 5 folds.
+- **Key finding:** RNA-only and protein-only RF predictions are nearly identical (r=0.996 between the two arms' predictions) — top-variance feature selection collapses both omics layers onto a shared tissue-of-origin proxy rather than modality-specific signal. This invalidates the current RNA-vs-protein comparison and must be fixed (RNA-divergence-aware protein selection, e.g. partial correlation or residual variance) before the fusion model, since the project hypothesis depends on RNA/protein carrying genuinely independent information.
+- Next session: implement corrected protein feature selection, re-validate protein-only and protein+drug results.
