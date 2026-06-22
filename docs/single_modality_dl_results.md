@@ -75,3 +75,5 @@ Notebook: `09_custom_MLP.ipynb` | Fold 0 | Hidden layers: 256 (RNA also tested a
 - **No single modality solves both generalization axes.** Drug features (FP/GNN) carry strong signal for seen-drug splits but fail on new drugs; omics carries weaker but more axis-stable signal. The fusion model's real test is beating drug-alone on LCO *and* beating omics-alone on LDO simultaneously — neither single-modality baseline does both.
 
 - **Open decision for the fusion architecture:** lead with FP or GNN as the drug arm? FP is the safer default given its clear edge here, but GNN's weaker standalone performance doesn't rule out complementary value once combined with omics — worth testing both in the multimodal ablation rather than assuming FP wins there too.
+
+- Protein (RNA)-only MLP performance is essentially unchanged between full features and top-1,000 variance selection (LCO r=0.21 vs 0.20, LDO r=0.29 vs 0.29), confirming the same finding as the RF: variance-based feature selection does not change what signal the protein modality captures, because the dominant variance structure is tissue-of-origin regardless of how many features are used.
