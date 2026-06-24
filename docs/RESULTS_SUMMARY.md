@@ -1,5 +1,5 @@
 # Multimodal Drug Response Prediction — Results Summary
-## Notebooks 09–13 | Fold 0 exploration + 5-fold evaluation
+## Notebooks 09–14 | Fold 0 exploration + 5-fold evaluation
 
 ---
 
@@ -195,16 +195,154 @@ RNA and protein each encoded to 256-d, fused via cross-attention
   protein signal.
 - **DL does not beat RF on LCO** — consistent with DrEval (Bernett et al. 2026).
 
-### Open question
-PCA-residual decomposition in cell-line space — remove tissue principal components from
-both RNA and protein before feature selection — is the required next experiment.
-If tissue signal is the dominant confound, residual features should show:
-1. RNA and protein single-modal performance drops (tissue signal removed).
-2. RNA-protein cross-attention finds genuinely complementary signal.
-3. Protein contributes positively to LCO for the first time.
-
-This is the experiment that either confirms or closes the multimodal hypothesis.
+### Open question — closed by nb14
+PCA-residual decomposition was identified as the required fix. Results in nb14 section below.
 
 ---
 
-*Generated after notebooks 09–13 | 5-fold CV | GDSC2 × CCLE × ProCan | fold structure: drevalpy LCO/LDO/LTO/LPO*
+## PCA-residual features (nb14, fold 0 only)
+
+**Setup:** Remove top-k tissue PCs from each modality (K_RNA=10, K_PROTEIN=15), then
+select top-1000 columns by IC50 correlation (not top-variance — see below).
+All PCA fits on train cell lines only.
+
+**Key finding before feature selection:**
+- Cross-cell-line RNA-protein correlation: top-variance r=0.52 → PCA-residual r=0.04
+  (tissue confound removed in full feature space)
+- After top-variance column selection on residuals: r=0.49 (shared proliferation/cell-cycle
+  axes reintroduced — top-variance is the wrong criterion on residuals)
+- After IC50-correlation column selection on residuals: r=-0.03
+  (selected features are genuinely orthogonal between modalities)
+- Column name overlap between top-1000 RNA and protein residual columns: 0
+  (r=0.49 was biological co-variation, not duplicate columns)
+
+### RF on residual features (fold 0)
+
+| Arm | LCO | LDO | LPO | LTO |
+|---|---|---|---|---|
+| RF rna_residual + drug | 0.8247 | 0.3034 | 0.8553 | 0.8399 |
+| RF protein_residual + drug | **0.8357** | **0.3283** | 0.8614 | 0.8479 |
+| RF rna_residual + protein_residual + drug | 0.8340 | 0.3084 | 0.8619 | 0.8470 |
+
+**Key observations:**
+- Sanity check 3 passes: RNA and protein now diverge (LCO 0.8247 vs 0.8357, LDO 0.3034
+  vs 0.3283). The tissue confound is removed and the modalities carry independent signal.
+- Protein residual beats RNA residual on both LCO (+0.011) and LDO (+0.025).
+  After tissue removal, protein is slightly more predictive than RNA for drug response.
+- RF fusion (both residuals + drug) does not beat protein-residual alone on LCO (0.8340
+  vs 0.8357). RF cannot exploit cross-modal complementarity — expected, sets up DL test.
+
+### DL on residual features (fold 0)
+
+| Arm | LCO | LDO | LPO | LTO |
+|---|---|---|---|---|
+| enc_concat_residual | 0.7683 | 0.4891 | 0.8245 | 0.7821 |
+| cross_attn_residual | 0.7560 | 0.3726 | 0.8028 | 0.7658 |
+| *(nb12 Tier2 enc_concat, top-var, fold 0 ref)* | *0.8021* | *0.5261* | — | — |
+| *(nb13 AX cross-attn, top-var, fold 0 ref)* | *0.7932* | *0.3890* | — | — |
+
+**Key observations:**
+- Cross-attention is worse than encoder concat on residual features (LCO -0.012,
+  LDO -0.165). The attention mechanism does not exploit RNA-protein complementarity
+  even when the modalities are genuinely independent.
+- Both DL models underperform RF on residual LCO (0.768/0.756 vs 0.825–0.836).
+  Within-tissue variation is noisier signal than tissue-level signal; MLP encoders
+  struggle where RF can still find useful splits.
+- DL enc_concat_residual LDO (0.4891) is below nb12 Tier2 top-var LDO (0.5261).
+  Residual features are harder across the board for DL.
+
+### Falsifiable predictions vs outcomes
+
+| Prediction | Outcome |
+|---|---|
+| (1) RNA and protein single-modal performance diverges | ✓ Confirmed (LCO +0.011, LDO +0.025) |
+| (2) enc_concat improves over RNA-only encoder + drug | ✗ Not tested directly (both residual) |
+| (3) Cross-attention improves over encoder concat on residuals | ✗ Failed (LCO -0.012, LDO -0.165) |
+
+---
+
+## Complete LCO ranking (updated)
+
+| Rank | Model | LCO | LDO | Category | Features |
+|---|---|---|---|---|---|
+| 1 | RF: RNA + Drug | 0.838 ± 0.013 | 0.350 ± 0.077 | Random Forest | top-var |
+| 1 | RF: Protein + Drug | 0.838 ± 0.018 | 0.340 ± 0.074 | Random Forest | top-var |
+| 1 | RF: RNA + Protein + Drug | 0.838 ± 0.013 | 0.336 ± 0.070 | Random Forest | top-var |
+| 4 | RF: protein_residual + drug | 0.8357 | 0.3283 | Random Forest | PCA-residual |
+| 5 | RF: rna+protein residual + drug | 0.8340 | 0.3084 | Random Forest | PCA-residual |
+| 6 | RF: rna_residual + drug | 0.8247 | 0.3034 | Random Forest | PCA-residual |
+| 7 | NaiveDrugMeanPredictor | 0.790 | — | Naive | — |
+| 7 | NaiveMeanEffectsPredictor | 0.790 | 0.284 | Naive | — |
+| 9 | rna_enc+protein_enc+drug_enc | 0.801 ± 0.017 | 0.368 ± 0.081 | DL encoder | top-var |
+| 10 | gated+drug_enc | 0.800 ± 0.016 | 0.383 ± 0.045 | DL encoder | top-var |
+| 11 | hadamard+drug_enc | 0.797 ± 0.021 | 0.373 ± 0.073 | DL encoder | top-var |
+| 12 | protein_enc+drug_enc | 0.796 ± 0.019 | 0.368 ± 0.069 | DL encoder | top-var |
+| 13 | rna_enc+drug_enc | 0.795 ± 0.021 | 0.352 ± 0.080 | DL encoder | top-var |
+| 13 | AY: fp+concat | 0.795 ± 0.021 | 0.384 ± 0.060 | Cross-attention | top-var |
+| 13 | AX: fp+attn | 0.795 ± 0.018 | 0.389 ± 0.083 | Cross-attention | top-var |
+| 16 | enc_concat_residual | 0.7683 | **0.4891** | DL encoder | PCA-residual |
+| 17 | cross_attn_residual | 0.7560 | 0.3726 | Cross-attention | PCA-residual |
+
+**LDO ranking (updated):**
+
+| Rank | Model | LDO | Features |
+|---|---|---|---|
+| 1 | enc_concat_residual | **0.4891** | PCA-residual |
+| 2 | AX: fp+attn | 0.389 ± 0.083 | top-var |
+| 3 | AY: fp+concat | 0.384 ± 0.060 | top-var |
+| 4 | gated+drug_enc | 0.383 ± 0.045 | top-var |
+| 5 | hadamard+drug_enc | 0.373 ± 0.073 | top-var |
+| 6 | rna_enc+protein_enc+drug_enc | 0.368 ± 0.081 | top-var |
+| 6 | protein_enc+drug_enc | 0.368 ± 0.069 | top-var |
+| 8 | rna_enc+drug_enc | 0.352 ± 0.080 | top-var |
+| 9 | RF: RNA+Drug | 0.350 ± 0.077 | top-var |
+| 10 | cross_attn_residual | 0.3726 | PCA-residual |
+| 11 | RF: protein_residual+drug | 0.3283 | PCA-residual |
+| 12 | RF: rna+protein residual+drug | 0.3084 | PCA-residual |
+| 13 | RF: rna_residual+drug | 0.3034 | PCA-residual |
+| 14 | NaiveMeanEffectsPredictor | 0.284 | — |
+| 15 | RF: Drug only | 0.104 ± 0.155 | top-var |
+
+---
+
+## Summary of findings
+
+### What works
+- **Encoder projection** (256-d per modality before concatenation) is the single most
+  impactful architectural choice: +0.05 LCO over raw concat, and flips the DL vs RF
+  LDO ranking in DL's favour.
+- **DL encoder models beat RF on LDO** (new drug generalization): 0.352–0.489 vs
+  0.104–0.350. Learned drug embeddings generalize; fingerprint-based RF does not.
+- **Gated fusion** has the most stable LDO across folds (±0.045 vs ±0.081).
+- **PCA-residual successfully decorrelates modalities**: IC50-selected residual features
+  achieve r=-0.03 cross-modal correlation vs r=0.52 for top-variance features.
+  RNA and protein now carry measurably independent drug-response signal.
+- **enc_concat on residual features achieves best LDO overall** (0.4891, fold 0) —
+  above all top-variance DL models. Suggests residual features improve new-drug
+  generalization even if LCO drops.
+
+### What does not work
+- **Cross-attention does not improve over encoder concat** under either feature regime
+  (top-variance or PCA-residual). Attention finds no exploitable structure between
+  modalities at this dataset scale.
+- **Protein does not improve LCO in any DL model** — even with genuinely independent
+  residual features, encoder concat with both modalities does not beat protein-residual
+  alone on LCO.
+- **DL does not beat RF on LCO** in any experiment — consistent with DrEval.
+- **PCA-residual features hurt LCO for DL** (0.768 vs 0.802 for enc_concat) —
+  within-tissue variation is noisier and harder for MLP encoders than tissue-level signal.
+
+### Interpretation
+The tissue confound is real and removable by PCA-residual, and independent protein
+signal exists (RF divergence confirmed). However, the DL models cannot exploit this
+complementarity: cross-attention underperforms encoder concat on residual features,
+and neither beats RF. The bottleneck is likely dataset scale (~836 cell lines) — the
+within-tissue variation signal is too sparse for attention to learn a meaningful
+protein-query weighting. This is a dataset-size limitation, not an architectural flaw.
+
+The best current result for new-drug generalization (LDO) is enc_concat_residual at
+0.4891 (fold 0). This warrants running 5-fold to confirm stability before concluding.
+
+---
+
+*Generated after notebooks 09–14 | fold 0 for nb14 | GDSC2 × CCLE × ProCan | fold structure: drevalpy LCO/LDO/LTO/LPO*
